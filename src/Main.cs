@@ -119,10 +119,14 @@ private bool _hasScannedForHUD = false;
 
         // 2. THE SUPPRESSOR: Constantly force the UI off if the game tries to turn it on during ADS
         foreach (var uiElement in _suppressedHUD) {
-            if (uiElement != null && uiElement.activeSelf) {
-                uiElement.SetActive(false);
+        if (uiElement != null) {
+            // Target the CanvasRenderer to stop it from drawing to the screen
+            var renderer = uiElement.GetComponent<CanvasRenderer>();
+            if (renderer != null && renderer.cull == false) {
+                renderer.cull = true; // Tells Unity's UI system to skip rendering this object
             }
         }
+    }
 
         float speedXZ = 0.0f;
         float speedY = 0.0f;
