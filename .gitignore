@@ -1,6 +1,7 @@
 *.dll
 *.exp
 *.lib
+*.obj
 documentation.txt
 
 # Build folders
