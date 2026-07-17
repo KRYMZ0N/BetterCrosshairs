@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "dgSpecHash": "LmdGDOFJGo0yChSNBr1g0SCRlPYkRM58CY7HuahrVM8yWHynGS+sAoaa31y1Gyz4shY2YrfJHQf9XtImd0Vt5w==",
+  "success": true,
+  "projectFilePath": "C:\\Users\\KRYMZ0N05\\Documents\\Undergrad\\modernity\\BetterCrosshairs\\BetterCrosshairs.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\KRYMZ0N05\\.nuget\\packages\\microsoft.netcore.app.ref\\6.0.26\\microsoft.netcore.app.ref.6.0.26.nupkg.sha512",
+    "C:\\Users\\KRYMZ0N05\\.nuget\\packages\\microsoft.windowsdesktop.app.ref\\6.0.26\\microsoft.windowsdesktop.app.ref.6.0.26.nupkg.sha512",
+    "C:\\Users\\KRYMZ0N05\\.nuget\\packages\\microsoft.aspnetcore.app.ref\\6.0.26\\microsoft.aspnetcore.app.ref.6.0.26.nupkg.sha512"
+  ],
+  "logs": []
+}
