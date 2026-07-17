@@ -1,19 +1,17 @@
 ﻿using UnityEngine;
 using UnityEngine.UI;
-using System.Data;
 using System.IO;
 using System.Collections.Generic;
 using Il2CppScheduleOne.DevUtilities;
 using Il2CppScheduleOne.PlayerScripts;
 using System.Reflection;
 using Il2CppFishNet;
-
 using System.Runtime.InteropServices;
 using MelonLoader;
 using Il2Cpp;
+// Cleaner
 
-
-[assembly: MelonInfo(typeof(BetterCrosshairs.Main), "Better Crosshairs", "0.0.1", "KRYMZ0N")]
+[assembly: MelonInfo(typeof(BetterCrosshairs.Main), "Better Crosshairs", "0.0.2", "KRYMZ0N")]
 [assembly: MelonGame("TVGS", "Schedule I")]
 
 namespace BetterCrosshairs;
@@ -21,6 +19,16 @@ public class Main : MelonMod {
 
     [DllImport("CrosshairMath", CallingConvention = CallingConvention.Cdecl)]
     public static extern float UpdateCrosshairPhysics(float speedXZ, float speedY, [MarshalAs(UnmanagedType.I1)] bool isFiring, [MarshalAs(UnmanagedType.I1)] bool isADS, float deltaTime);
+
+    // Global Configuration hooks accessed by CrosshairMenu
+    public static MelonPreferences_Category CrosshairCategory = null!;
+    public static MelonPreferences_Entry<float> ConfigBaseGap = null!;
+    public static MelonPreferences_Entry<float> ConfigLength = null!;
+    public static MelonPreferences_Entry<float> ConfigThickness = null!;
+    public static MelonPreferences_Entry<string> ConfigColorHex = null!;
+
+    // Instantiating our separate interface handler class
+    private CrosshairMenu _menu = new CrosshairMenu();
 
     private Texture2D? _whiteTexture;
     private float _dynamicSpread = 0f;
@@ -30,11 +38,8 @@ public class Main : MelonMod {
     private Player? _cachedPlayer;
     private Vector3 _lastPlayerPosition;
     
-    private const float CrosshairLength = 12f;
-    private const float CrosshairThickness = 2f;
-    private const float BaseGap = 6f;
     private List<GameObject> _suppressedHUD = new List<GameObject>();
-private bool _hasScannedForHUD = false;
+    private bool _hasScannedForHUD = false;
 
     private Texture2D ReticleTexture {
         get {
@@ -85,6 +90,12 @@ private bool _hasScannedForHUD = false;
     public override void OnInitializeMelon() {
         ExtractNativeDll();
 
+        CrosshairCategory = MelonPreferences.CreateCategory("BetterCrosshairs", "Better Crosshairs Settings");
+        ConfigBaseGap = CrosshairCategory.CreateEntry("BaseGap", 6f, "Base Crosshair Gap");
+        ConfigLength = CrosshairCategory.CreateEntry("LineLength", 12f, "Crosshair Line Length");
+        ConfigThickness = CrosshairCategory.CreateEntry("LineThickness", 2f, "Crosshair Line Thickness");
+        ConfigColorHex = CrosshairCategory.CreateEntry("CrosshairColor", "#00FF00", "Crosshair Hex Color");
+
         LoggerInstance.Msg("Crosshair Intitialized!");
     }
 
@@ -95,11 +106,16 @@ private bool _hasScannedForHUD = false;
             _shouldDraw = false;
             _cachedPlayer = null; 
             _hasScannedForHUD = false; 
-        _suppressedHUD.Clear(); // Clear the list when leaving a match
+            _suppressedHUD.Clear(); // Clear the list when leaving a match
             return;
         }
 
         _shouldDraw = true;
+
+        // Toggle the sub-class interface menu whenever F10 is pressed
+        if (Input.GetKeyDown(KeyCode.F10)) {
+            _menu.ToggleMenu();
+        }
 
         if (_cachedPlayer == null) {
             var allPlayers = UnityEngine.Object.FindObjectsOfType<Player>();
@@ -157,7 +173,9 @@ private bool _hasScannedForHUD = false;
 
 
     public override void OnGUI() {
-        // Pure rendering pass. No physics calculations, no component hunting.
+        // 1. Delegate menu rendering duties immediately to our sub-class engine
+        _menu.Draw();
+
         if (!_shouldDraw) return;
 
         GUI.depth = 0;
@@ -168,16 +186,22 @@ private bool _hasScannedForHUD = false;
         float centerX = width / 2f;
         float centerY = height / 2f;
         
-        // Use the smooth value updated from the update loop
-        float totalGap = BaseGap + _dynamicSpread;
+        // Dynamically scale parameters using the configuration variables updated by the menu sliders
+        float totalGap = ConfigBaseGap.Value + _dynamicSpread;
+        float currentLength = ConfigLength.Value;
+        float currentThickness = ConfigThickness.Value;
 
-        GUI.color = Color.green;
+        if (ColorUtility.TryParseHtmlString(ConfigColorHex.Value, out Color customColor)) {
+            GUI.color = customColor;
+        } else {
+            GUI.color = Color.green;
+        }
 
-        // Draw reticle
-        GUI.DrawTexture(new Rect(centerX - totalGap - CrosshairLength, centerY - (CrosshairThickness / 2f), CrosshairLength, CrosshairThickness), ReticleTexture);
-        GUI.DrawTexture(new Rect(centerX + totalGap, centerY - (CrosshairThickness / 2f), CrosshairLength, CrosshairThickness), ReticleTexture);
-        GUI.DrawTexture(new Rect(centerX - (CrosshairThickness / 2f), centerY - totalGap - CrosshairLength, CrosshairThickness, CrosshairLength), ReticleTexture);
-        GUI.DrawTexture(new Rect(centerX - (CrosshairThickness / 2f), centerY + totalGap, CrosshairThickness, CrosshairLength), ReticleTexture);
+        // Draw reticle lines using configurable values
+        GUI.DrawTexture(new Rect(centerX - totalGap - currentLength, centerY - (currentThickness / 2f), currentLength, currentThickness), ReticleTexture);
+        GUI.DrawTexture(new Rect(centerX + totalGap, centerY - (currentThickness / 2f), currentLength, currentThickness), ReticleTexture);
+        GUI.DrawTexture(new Rect(centerX - (currentThickness / 2f), centerY - totalGap - currentLength, currentThickness, currentLength), ReticleTexture);
+        GUI.DrawTexture(new Rect(centerX - (currentThickness / 2f), centerY + totalGap, currentThickness, currentLength), ReticleTexture);
         
         GUI.color = Color.white;
     }
