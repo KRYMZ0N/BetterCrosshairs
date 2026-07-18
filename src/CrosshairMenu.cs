@@ -15,7 +15,10 @@ public class CrosshairMenu {
 
     public CrosshairMenu() {
         _managedDrawAction = DrawMenuContents;
-        // Do NOT initialize DelegateSupport here!
+        
+        // FIX: Compile the Il2Cpp unmanaged-to-managed thunk immediately on startup.
+        // This takes the performance hit during the loading screen instead of when pressing F10.
+        _drawMenuDelegate = DelegateSupport.ConvertDelegate<GUI.WindowFunction>(_managedDrawAction);
     }
 
     public void ToggleMenu() {
@@ -27,13 +30,7 @@ public class CrosshairMenu {
     }
 
     public void Draw() {
-        if (!_isOpen) return;
-
-        // Lazy-initialize the delegate only when the menu is actually opened for the first time
-        if (_drawMenuDelegate == null) {
-            _drawMenuDelegate = DelegateSupport.ConvertDelegate<GUI.WindowFunction>(_managedDrawAction);
-        }
-        
+        if (!_isOpen) return;   
         _windowRect = GUI.Window(0, _windowRect, _drawMenuDelegate, "Better Crosshairs Setup");
     }
 
@@ -96,15 +93,14 @@ public class CrosshairMenu {
     public static void FindHudNetworkSafe(List<GameObject> targetList) {
         targetList.Clear();
         
-        // Only search specifically for the UI root if possible
-        // or cache the results once per map load, not repeatedly.
-        var allObjects = Resources.FindObjectsOfTypeAll<GameObject>();
+        // FIX: Replaced Resources.FindObjectsOfTypeAll with UnityEngine.Object.FindObjectsOfType
+        // Passing 'true' includes inactive objects without dumping the entire internal engine heap.
+        var allObjects = UnityEngine.Object.FindObjectsOfType<GameObject>(true);
         
         foreach (var obj in allObjects) {
-            // Use string comparison only on active or relevant objects
             if (obj.hideFlags != HideFlags.None) continue;
             
-            string n = obj.name; // Marshal once
+            string n = obj.name; 
             if (n == "Crosshair" || n == "Reticle") {
                 targetList.Add(obj);
                 obj.transform.localScale = Vector3.zero;

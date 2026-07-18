@@ -11,7 +11,7 @@ using MelonLoader;
 using Il2Cpp;
 // Cleaner
 
-[assembly: MelonInfo(typeof(BetterCrosshairs.Main), "Better Crosshairs", "0.1.0", "KRYMZ0N")]
+[assembly: MelonInfo(typeof(BetterCrosshairs.Main), "Better Crosshairs", "0.1.1", "KRYMZ0N")]
 [assembly: MelonGame("TVGS", "Schedule I")]
 
 namespace BetterCrosshairs;
@@ -28,7 +28,7 @@ public class Main : MelonMod {
     public static MelonPreferences_Entry<string> ConfigColorHex = null!;
 
     // Instantiating our separate interface handler class
-    private CrosshairMenu _menu = new CrosshairMenu();
+    private CrosshairMenu _menu = null!; // Initialized in OnInitializeMelon
 
     private Texture2D? _whiteTexture;
     public Color CurrentColor { get; private set; } = Color.green;
@@ -69,6 +69,8 @@ public class Main : MelonMod {
             UpdateColorCache(savedColor);
         }
 
+        _menu = new CrosshairMenu();
+
         MelonEvents.OnUpdate.Subscribe(GlobalInputCheck, 0);
 
         LoggerInstance.Msg("Crosshair Intitialized!");
@@ -91,19 +93,15 @@ public class Main : MelonMod {
     }
 
     public override void OnUpdate() {
-
-        // 1. THE THROTTLED SEARCH
-        // If we don't have the player, only scan the hierarchy ONCE per second, not 60x a second.
+        // THE THROTTLED SEARCH
         if (_cachedPlayer == null) {
             _playerSearchTimer += Time.deltaTime;
             
             if (_playerSearchTimer > 1.0f) {
-                // Move the expensive singleton check into the throttled loop
                 var playerInv = PlayerSingleton<PlayerInventory>.Instance;
                 if (playerInv == null) {
                     _shouldDraw = false;
                     _menu.ForceClose(); 
-                    _hasAttemptedADSSearch = false; 
                     return;
                 }
 
@@ -112,6 +110,9 @@ public class Main : MelonMod {
                     if (player.IsOwner) { 
                         _cachedPlayer = player;
                         _lastPlayerPosition = _cachedPlayer.transform.position;
+                        
+                        // FIX: Suppress the HUD right when we find the player, completely removing the lag from combat ADS.
+                        CrosshairMenu.FindHudNetworkSafe(_suppressedHUD);
                         break; 
                     }
                 }
@@ -126,18 +127,10 @@ public class Main : MelonMod {
 
         _shouldDraw = true;
 
-        // Get inputs early
         bool isPlayerFiring = Input.GetMouseButton(0); 
         bool isADS = Input.GetMouseButton(1); 
 
-        // THE ON-DEMAND ADS SNIPER
-        if (!_hasAttemptedADSSearch && isADS && _cachedPlayer != null && _cachedPlayer.transform.position != Vector3.zero) {
-            CrosshairMenu.FindHudNetworkSafe(_suppressedHUD);
-            _hasAttemptedADSSearch = true; 
-        }
-
-        // 2. DELEGATE-FREE CULLING
-        // We only call RemoveAll if we actually detect a destroyed UI element in the standard loop
+        // HUD DELEGATE-FREE CULLING
         bool needsCleanup = false;
         
         for (int i = 0; i < _suppressedHUD.Count; i++) {
@@ -151,7 +144,6 @@ public class Main : MelonMod {
             }
         }
 
-        // Only allocate the lambda delegate if absolutely necessary
         if (needsCleanup) {
             _suppressedHUD.RemoveAll(item => item == null);
         }
