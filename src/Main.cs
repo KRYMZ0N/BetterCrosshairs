@@ -11,7 +11,7 @@ using MelonLoader;
 using Il2Cpp;
 // Cleaner
 
-[assembly: MelonInfo(typeof(BetterCrosshairs.Main), "Better Crosshairs", "0.0.2", "KRYMZ0N")]
+[assembly: MelonInfo(typeof(BetterCrosshairs.Main), "Better Crosshairs", "0.1.0", "KRYMZ0N")]
 [assembly: MelonGame("TVGS", "Schedule I")]
 
 namespace BetterCrosshairs;
@@ -31,7 +31,11 @@ public class Main : MelonMod {
     private CrosshairMenu _menu = new CrosshairMenu();
 
     private Texture2D? _whiteTexture;
+    public Color CurrentColor { get; private set; } = Color.green;
+    private Color _cachedCrosshairColor = Color.green;
     private float _dynamicSpread = 0f;
+    private float _playerSearchTimer = 0f;
+    private bool _hasAttemptedADSSearch = false;
     private bool _shouldDraw = false;
     
     // Cached references to completely eliminate garbage collection and loop lag
@@ -39,7 +43,6 @@ public class Main : MelonMod {
     private Vector3 _lastPlayerPosition;
     
     private List<GameObject> _suppressedHUD = new List<GameObject>();
-    private bool _hasScannedForHUD = false;
 
     private Texture2D ReticleTexture {
         get {
@@ -49,45 +52,10 @@ public class Main : MelonMod {
             return _whiteTexture;
         }
     }
-    // private void DisableDefaultHUD() {
-    //     // Targets the primary structural UI container revealed by console dump
-    //     GameObject defaultCrosshairContainer = GameObject.Find("Crosshair");
-    //     if (defaultCrosshairContainer != null) {
-    //         defaultCrosshairContainer.SetActive(false);
-    //         _defaultCrosshairHidden = true;
-    //         LoggerInstance.Msg("Successfully disabled default 'Crosshair' UI hierarchy.");
-    //         return;
-    //     }
-
-    //     // Fail-safe redundancy targeting standalone reticle objects
-    //     GameObject standaloneReticle = GameObject.Find("Reticle");
-    //     if (standaloneReticle != null) {
-    //         standaloneReticle.SetActive(false);
-    //         _defaultCrosshairHidden = true;
-    //         LoggerInstance.Msg("Successfully disabled standalone 'Reticle' UI asset.");
-    //     }
-    // }
-
-    private void FindAndCacheHUD() {
-        // FindObjectsOfTypeAll searches EVERYTHING, including hidden/inactive objects
-        var allObjects = Resources.FindObjectsOfTypeAll<GameObject>();
-        
-        foreach (var obj in allObjects) {
-            // Target the exact names from your console dump
-            if (obj.name == "Crosshair" || obj.name == "Reticle") {
-                
-                // hideFlags check ensures we only grab the actual in-scene UI, not the raw Prefab template
-                if (obj.hideFlags == HideFlags.None) {
-                    _suppressedHUD.Add(obj);
-                    obj.SetActive(false);
-                    LoggerInstance.Msg($"[SUPPRESSOR] Found and locked target: {obj.name}");
-                }
-            }
-        }
-        
-        _hasScannedForHUD = true; // Lock the scan so it only runs once per map
-    }
+    public static Main Instance { get; private set; } = null!;
     public override void OnInitializeMelon() {
+
+        Instance = this;
         ExtractNativeDll();
 
         CrosshairCategory = MelonPreferences.CreateCategory("BetterCrosshairs", "Better Crosshairs Settings");
@@ -95,54 +63,98 @@ public class Main : MelonMod {
         ConfigLength = CrosshairCategory.CreateEntry("LineLength", 12f, "Crosshair Line Length");
         ConfigThickness = CrosshairCategory.CreateEntry("LineThickness", 2f, "Crosshair Line Thickness");
         ConfigColorHex = CrosshairCategory.CreateEntry("CrosshairColor", "#00FF00", "Crosshair Hex Color");
+        
+        // Cache the color immediately on startup so OnGUI doesn't have to parse strings
+        if (ColorUtility.TryParseHtmlString(ConfigColorHex.Value, out Color savedColor)) {
+            UpdateColorCache(savedColor);
+        }
+
+        MelonEvents.OnUpdate.Subscribe(GlobalInputCheck, 0);
 
         LoggerInstance.Msg("Crosshair Intitialized!");
     }
 
+    // Ensure this method accepts Color, NOT string
+    public void UpdateColorCache(Color color) {
+        CurrentColor = color;
+        _cachedCrosshairColor = color;
+        // Sync with your config file
+        ConfigColorHex.Value = "#" + ColorUtility.ToHtmlStringRGB(color);
+    }
+
     // OnUpdate runs exactly ONCE per frame loop. Perfect for physics calculations.
+    private void GlobalInputCheck() {
+        // Only allow F10 to register if the player is actively loaded in the match
+        if (_shouldDraw && Input.GetKeyDown(KeyCode.F10)) {
+            _menu.ToggleMenu();
+        }
+    }
+
     public override void OnUpdate() {
-        var playerInv = PlayerSingleton<PlayerInventory>.Instance;
-        if (playerInv == null) {
-            _shouldDraw = false;
-            _cachedPlayer = null; 
-            _hasScannedForHUD = false; 
-            _suppressedHUD.Clear(); // Clear the list when leaving a match
-            return;
+
+        // 1. THE THROTTLED SEARCH
+        // If we don't have the player, only scan the hierarchy ONCE per second, not 60x a second.
+        if (_cachedPlayer == null) {
+            _playerSearchTimer += Time.deltaTime;
+            
+            if (_playerSearchTimer > 1.0f) {
+                // Move the expensive singleton check into the throttled loop
+                var playerInv = PlayerSingleton<PlayerInventory>.Instance;
+                if (playerInv == null) {
+                    _shouldDraw = false;
+                    _menu.ForceClose(); 
+                    _hasAttemptedADSSearch = false; 
+                    return;
+                }
+
+                var allPlayers = UnityEngine.Object.FindObjectsOfType<Player>();
+                foreach (var player in allPlayers) {
+                    if (player.IsOwner) { 
+                        _cachedPlayer = player;
+                        _lastPlayerPosition = _cachedPlayer.transform.position;
+                        break; 
+                    }
+                }
+                _playerSearchTimer = 0f;
+            }
+            
+            if (_cachedPlayer == null) {
+                _shouldDraw = false;
+                return;
+            }
         }
 
         _shouldDraw = true;
 
-        // Toggle the sub-class interface menu whenever F10 is pressed
-        if (Input.GetKeyDown(KeyCode.F10)) {
-            _menu.ToggleMenu();
+        // Get inputs early
+        bool isPlayerFiring = Input.GetMouseButton(0); 
+        bool isADS = Input.GetMouseButton(1); 
+
+        // THE ON-DEMAND ADS SNIPER
+        if (!_hasAttemptedADSSearch && isADS && _cachedPlayer != null && _cachedPlayer.transform.position != Vector3.zero) {
+            CrosshairMenu.FindHudNetworkSafe(_suppressedHUD);
+            _hasAttemptedADSSearch = true; 
         }
 
-        if (_cachedPlayer == null) {
-            var allPlayers = UnityEngine.Object.FindObjectsOfType<Player>();
-            foreach (var player in allPlayers) {
-                if (player.IsOwner) { 
-                    _cachedPlayer = player;
-                    _lastPlayerPosition = _cachedPlayer.transform.position;
-                    break; 
-                }
-            }
-        }
+        // 2. DELEGATE-FREE CULLING
+        // We only call RemoveAll if we actually detect a destroyed UI element in the standard loop
+        bool needsCleanup = false;
         
-        // 1. Run the deep memory scan ONCE when you load in
-        if (!_hasScannedForHUD && _cachedPlayer != null && _cachedPlayer.transform.position != Vector3.zero) {
-            FindAndCacheHUD();
-        }
-
-        // 2. THE SUPPRESSOR: Constantly force the UI off if the game tries to turn it on during ADS
-        foreach (var uiElement in _suppressedHUD) {
-        if (uiElement != null) {
-            // Target the CanvasRenderer to stop it from drawing to the screen
-            var renderer = uiElement.GetComponent<CanvasRenderer>();
-            if (renderer != null && renderer.cull == false) {
-                renderer.cull = true; // Tells Unity's UI system to skip rendering this object
+        for (int i = 0; i < _suppressedHUD.Count; i++) {
+            GameObject uiElement = _suppressedHUD[i];
+            
+            if (uiElement == null) {
+                needsCleanup = true;
+            } 
+            else if (uiElement.transform.localScale != Vector3.zero) {
+                uiElement.transform.localScale = Vector3.zero;
             }
         }
-    }
+
+        // Only allocate the lambda delegate if absolutely necessary
+        if (needsCleanup) {
+            _suppressedHUD.RemoveAll(item => item == null);
+        }
 
         float speedXZ = 0.0f;
         float speedY = 0.0f;
@@ -151,22 +163,15 @@ public class Main : MelonMod {
             Vector3 currentPosition = _cachedPlayer.transform.position;
             
             if (Time.deltaTime > 0f) {
-                // Isolate horizontal strafing/walking
                 Vector3 currentXZ = new Vector3(currentPosition.x, 0, currentPosition.z);
                 Vector3 lastXZ = new Vector3(_lastPlayerPosition.x, 0, _lastPlayerPosition.z);
                 speedXZ = Vector3.Distance(currentXZ, lastXZ) / Time.deltaTime;
-
-                // Isolate vertical jumping/falling
                 speedY = Mathf.Abs(currentPosition.y - _lastPlayerPosition.y) / Time.deltaTime;
             }
             
             _lastPlayerPosition = currentPosition;
         }
-
-        bool isPlayerFiring = Input.GetMouseButton(0); // Left Click
-        bool isADS = Input.GetMouseButton(1);          // Right Click (ADS)
         
-        // Feed the split directional data and ADS state into the physics simulation
         _dynamicSpread = UpdateCrosshairPhysics(speedXZ, speedY, isPlayerFiring, isADS, Time.deltaTime);
     }
 
@@ -174,8 +179,10 @@ public class Main : MelonMod {
 
     public override void OnGUI() {
         // 1. Delegate menu rendering duties immediately to our sub-class engine
+        // (This uses the cached delegate we fixed in CrosshairMenu.cs)
         _menu.Draw();
 
+        // 2. Bail out early if we don't have a valid player/session
         if (!_shouldDraw) return;
 
         GUI.depth = 0;
@@ -191,18 +198,16 @@ public class Main : MelonMod {
         float currentLength = ConfigLength.Value;
         float currentThickness = ConfigThickness.Value;
 
-        if (ColorUtility.TryParseHtmlString(ConfigColorHex.Value, out Color customColor)) {
-            GUI.color = customColor;
-        } else {
-            GUI.color = Color.green;
-        }
+        // 3. Apply the cached color (Zero allocations!)
+        GUI.color = _cachedCrosshairColor;
 
-        // Draw reticle lines using configurable values
+        // 4. Draw reticle lines using configurable values
         GUI.DrawTexture(new Rect(centerX - totalGap - currentLength, centerY - (currentThickness / 2f), currentLength, currentThickness), ReticleTexture);
         GUI.DrawTexture(new Rect(centerX + totalGap, centerY - (currentThickness / 2f), currentLength, currentThickness), ReticleTexture);
         GUI.DrawTexture(new Rect(centerX - (currentThickness / 2f), centerY - totalGap - currentLength, currentThickness, currentLength), ReticleTexture);
         GUI.DrawTexture(new Rect(centerX - (currentThickness / 2f), centerY + totalGap, currentThickness, currentLength), ReticleTexture);
         
+        // 5. Reset color to white to prevent tinting other UI elements
         GUI.color = Color.white;
     }
 
